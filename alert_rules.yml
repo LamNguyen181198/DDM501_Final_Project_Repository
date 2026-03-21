@@ -1,0 +1,118 @@
+# prometheus/alert_rules.yml
+# ---------------------------------------------------------------------------
+# Alerting rules for the Customer Satisfaction Prediction System
+# DDM501 Group 4
+# ---------------------------------------------------------------------------
+
+groups:
+
+  # -----------------------------------------------------------------------
+  # API availability & latency
+  # -----------------------------------------------------------------------
+  - name: api_alerts
+    rules:
+
+      - alert: APIHighErrorRate
+        expr: |
+          rate(api_requests_total{status="error"}[5m])
+          /
+          rate(api_requests_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High API error rate detected"
+          description: >
+            More than 5 % of prediction requests are returning errors
+            over the last 5 minutes. Current rate: {{ $value | humanizePercentage }}.
+
+      - alert: APIHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            rate(api_request_duration_seconds_bucket{endpoint="predict"}[5m])
+          ) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "95th-percentile prediction latency above 200 ms"
+          description: >
+            P95 latency = {{ $value | humanizeDuration }}.
+            Target is < 200 ms per the system goals (see DDM501 report §1.5).
+
+      - alert: APIDown
+        expr: up{job="satisfaction_api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Prediction API is unreachable"
+          description: "Prometheus cannot scrape the API. Check container health."
+
+  # -----------------------------------------------------------------------
+  # ML model quality
+  # -----------------------------------------------------------------------
+  - name: model_alerts
+    rules:
+
+      - alert: LowPredictionConfidence
+        expr: |
+          histogram_quantile(0.50,
+            rate(model_prediction_confidence_bucket[10m])
+          ) < 0.6
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Median model confidence is low (< 60 %)"
+          description: >
+            Median prediction confidence has fallen below 0.6.
+            This may indicate data drift or model degradation.
+            Consider triggering a retraining run.
+
+      - alert: SatisfactionClassImbalance
+        expr: |
+          abs(
+            rate(prediction_class_total{predicted_class="High"}[30m])
+            -
+            rate(prediction_class_total{predicted_class="Low"}[30m])
+          )
+          /
+          (
+            rate(prediction_class_total{predicted_class="High"}[30m])
+            + rate(prediction_class_total{predicted_class="Low"}[30m])
+          ) > 0.4
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prediction output heavily skewed toward one class"
+          description: >
+            The ratio of High vs Low predictions has diverged by more than 40 %.
+            This could signal concept drift in incoming customer data.
+
+  # -----------------------------------------------------------------------
+  # System / infrastructure
+  # -----------------------------------------------------------------------
+  - name: infra_alerts
+    rules:
+
+      - alert: HighActiveRequests
+        expr: api_active_requests > 50
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High number of concurrent active requests"
+          description: >
+            {{ $value }} requests are concurrently active.
+            Consider scaling the API service.
+
+      - alert: MLflowDown
+        expr: up{job="mlflow"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MLflow tracking server is unreachable"
+          description: "Experiment tracking and model registry are unavailable."

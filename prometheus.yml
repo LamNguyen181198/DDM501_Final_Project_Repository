@@ -1,0 +1,42 @@
+# prometheus/prometheus.yml
+# ---------------------------------------------------------------------------
+# Prometheus configuration for the Customer Satisfaction Prediction System
+# Scrapes: API service, itself, and optionally node-exporter
+# ---------------------------------------------------------------------------
+
+global:
+  scrape_interval:     15s   # pull metrics every 15 seconds
+  evaluation_interval: 15s   # evaluate alert rules every 15 seconds
+  scrape_timeout:      10s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []          # wire Alertmanager here if used
+
+rule_files:
+  - "alert_rules.yml"
+
+scrape_configs:
+
+  # ---------- Prometheus self-monitoring ----------
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # ---------- Prediction API ----------
+  - job_name: "satisfaction_api"
+    metrics_path: "/metrics"
+    scrape_interval: 10s        # more frequent for ML latency tracking
+    static_configs:
+      - targets: ["api:8000"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "satisfaction_api"
+
+  # ---------- MLflow (basic HTTP probe via blackbox if needed) ----------
+  - job_name: "mlflow"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["mlflow:5000"]
