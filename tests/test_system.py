@@ -1,6 +1,5 @@
 """Test suite for the AI in Retail satisfaction system."""
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -78,12 +77,7 @@ def sample_df():
 @pytest.fixture
 def api_client():
     """TestClient for FastAPI app with mocked model artifacts."""
-    import sys
-
-    repo_root = Path(__file__).resolve().parent.parent
-    sys.path.insert(0, str(repo_root))
-    sys.path.insert(0, str(repo_root / "pipeline"))
-
+    # sys.path is set up globally by conftest.py
     # Mock artifacts so tests don't need real model files
     mock_model = MagicMock()
     mock_model.predict.return_value = np.array([1])
@@ -367,3 +361,209 @@ class TestModelValidation:
             "Unsatisfied",
         ]
         assert all(p in valid for p in predictions)
+
+
+# ============================================================
+# Extended Data Ingestion Tests
+# ============================================================
+
+
+class TestDataIngestionExtended:
+
+    def test_normalize_column_name(self):
+        from pipeline.data_ingestion import _normalize_column_name
+
+        assert _normalize_column_name("Some  Column!") == "some_column"
+        assert _normalize_column_name("ai_tool_chatbots") == "ai_tool_chatbots"
+        assert _normalize_column_name("  country  ") == "country"
+
+    def test_normalize_text_value(self):
+        from pipeline.data_ingestion import _normalize_text_value
+
+        assert _normalize_text_value("  hello  ") == "hello"
+        # Smart right-single-quote → plain apostrophe
+        assert _normalize_text_value("Masters\u2019 Degree") == "Masters' Degree"
+        # Non-string values pass through unchanged
+        assert _normalize_text_value(42) == 42
+
+    def test_find_first_csv(self, tmp_path):
+        from pipeline.data_ingestion import _find_first_csv
+
+        (tmp_path / "data.csv").write_text("a,b\n1,2\n")
+        result = _find_first_csv(tmp_path)
+        assert result is not None and result.name == "data.csv"
+
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        assert _find_first_csv(empty) is None
+
+    def test_load_raw_data(self, sample_df, tmp_path):
+        from pipeline.data_ingestion import load_raw_data
+
+        csv_path = tmp_path / "test.csv"
+        sample_df.to_csv(csv_path, index=False)
+        result = load_raw_data(csv_path)
+        assert isinstance(result, pd.DataFrame)
+        assert "satisfaction_level" in result.columns
+
+    def test_split_data(self, sample_df):
+        from pipeline.data_ingestion import split_data
+
+        large_df = pd.concat([sample_df] * 10).reset_index(drop=True)
+        train, val, test = split_data(large_df)
+        assert len(train) + len(val) + len(test) == len(large_df)
+        assert len(train) > len(val)
+        assert len(train) > len(test)
+
+    def test_run_ingestion_mocked(self, monkeypatch, sample_df, tmp_path):
+        from pipeline import data_ingestion as di
+
+        monkeypatch.setattr(di, "load_raw_data", lambda path=None: sample_df)
+        monkeypatch.setattr(di, "PROCESSED_PATH", tmp_path / "cleaned.csv")
+        result = di.run_ingestion()
+        assert isinstance(result, pd.DataFrame)
+        assert (tmp_path / "cleaned.csv").exists()
+
+
+# ============================================================
+# Extended Feature Engineering Tests
+# ============================================================
+
+
+class TestFeatureEngineeringExtended:
+
+    def test_yes_no_to_int(self):
+        from pipeline.feature_engineer import _yes_no_to_int
+
+        s = pd.Series(["YES", "NO", "yes", "no"])
+        result = _yes_no_to_int(s)
+        assert list(result) == [1, 0, 1, 0]
+
+    def test_build_preprocessor(self, sample_df):
+        from pipeline.feature_engineer import (
+            NOMINAL_FEATURES,
+            NUMERIC_FEATURES,
+            ORDINAL_FEATURES,
+            build_preprocessor,
+            create_domain_features,
+        )
+
+        df = create_domain_features(sample_df)
+        preprocessor = build_preprocessor()
+        X = df[NUMERIC_FEATURES + ORDINAL_FEATURES + NOMINAL_FEATURES]
+        transformed = preprocessor.fit_transform(X)
+        assert transformed.shape[0] == len(df)
+        assert len(preprocessor.transformers) == 3
+
+    def test_encode_target(self, sample_df):
+        from pipeline.feature_engineer import encode_target
+
+        y = sample_df["satisfaction_level"]
+        encoded, le = encode_target(y)
+        assert len(encoded) == len(y)
+        assert len(le.classes_) == 2
+
+    @patch("pipeline.feature_engineer.joblib.dump")
+    def test_run_feature_engineering(self, mock_dump, sample_df):
+        from pipeline.feature_engineer import run_feature_engineering
+
+        train_df = sample_df.copy()
+        val_df = sample_df.copy()
+        test_df = sample_df.copy()
+        result = run_feature_engineering(train_df, val_df, test_df)
+        X_train, X_val, X_test, y_train, y_val, y_test, preprocessor, le = result
+        assert X_train.shape[0] == len(train_df)
+        assert mock_dump.call_count == 2
+
+
+# ============================================================
+# Training Pipeline Tests
+# ============================================================
+
+
+class TestTrainingPipeline:
+
+    def test_compute_metrics_perfect(self):
+        from pipeline.train import compute_metrics
+
+        y = np.array([0, 1, 0, 1])
+        proba = np.array([0.1, 0.9, 0.2, 0.8])
+        metrics = compute_metrics(y, y, proba)
+        assert metrics["accuracy"] == 1.0
+        assert metrics["f1"] == 1.0
+        assert metrics["roc_auc"] == 1.0
+
+    def test_compute_metrics_keys(self):
+        from pipeline.train import compute_metrics
+
+        y_true = np.array([0, 1, 0, 1, 1])
+        y_pred = np.array([0, 1, 0, 0, 1])
+        y_prob = np.array([0.1, 0.9, 0.2, 0.4, 0.8])
+        metrics = compute_metrics(y_true, y_pred, y_prob)
+        assert set(metrics.keys()) == {
+            "accuracy",
+            "precision",
+            "recall",
+            "f1",
+            "roc_auc",
+        }
+        assert all(0.0 <= v <= 1.0 for v in metrics.values())
+
+    def test_register_best_model(self):
+        from pipeline.train import register_best_model
+
+        with patch("pipeline.train.mlflow") as mock_mlflow:
+            mock_registered = MagicMock()
+            mock_registered.name = "ai_retail_satisfaction_model"
+            mock_registered.version = "1"
+            mock_mlflow.register_model.return_value = mock_registered
+            mock_client = MagicMock()
+            mock_mlflow.tracking.MlflowClient.return_value = mock_client
+
+            register_best_model("run-id-123", "random_forest")
+
+            mock_mlflow.register_model.assert_called_once()
+            mock_client.set_registered_model_alias.assert_called_once()
+
+    def test_save_best_model_locally_sklearn(self, tmp_path):
+        from pipeline.train import save_best_model_locally
+
+        with patch("pipeline.train.mlflow") as mock_mlflow, patch(
+            "pipeline.train.joblib"
+        ) as mock_joblib, patch("pipeline.train.ARTIFACTS_DIR", tmp_path):
+            mock_mlflow.sklearn.load_model.return_value = MagicMock()
+            save_best_model_locally("run-id-123", "random_forest")
+            mock_mlflow.sklearn.load_model.assert_called_once()
+            mock_joblib.dump.assert_called_once()
+
+    def test_save_best_model_locally_lightgbm(self, tmp_path):
+        from pipeline.train import save_best_model_locally
+
+        with patch("pipeline.train.mlflow") as mock_mlflow, patch(
+            "pipeline.train.joblib"
+        ) as mock_joblib, patch("pipeline.train.ARTIFACTS_DIR", tmp_path):
+            mock_mlflow.lightgbm.load_model.return_value = MagicMock()
+            save_best_model_locally("run-id-123", "lightgbm")
+            mock_mlflow.lightgbm.load_model.assert_called_once()
+            mock_joblib.dump.assert_called_once()
+
+    def test_train_and_track(self, tmp_path):
+        from pipeline.train import train_and_track
+
+        rng = np.random.default_rng(0)
+        X = rng.random((30, 5))
+        y = np.tile([0, 1], 15)
+
+        with patch("pipeline.train.mlflow") as mock_mlflow, patch(
+            "pipeline.train.ARTIFACTS_DIR", tmp_path
+        ):
+            mock_run = MagicMock()
+            mock_run.info.run_id = "fixed-run-id"
+            mock_mlflow.start_run.return_value = mock_run
+
+            best_run_id, best_model_name = train_and_track(
+                X, y, X, y, X, y, ["Satisfied", "Unsatisfied"]
+            )
+
+        assert best_run_id is not None
+        assert best_model_name in ["logistic_regression", "random_forest", "lightgbm"]
