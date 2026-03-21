@@ -168,7 +168,7 @@ jobs:
         run: |
           echo "Pulling latest images and restarting services..."
           docker compose pull
-          docker compose up -d --no-build
+          docker compose up -d --build
           docker compose ps
 
       - name: Verify API health post-deploy
