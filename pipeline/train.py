@@ -17,10 +17,11 @@ from pathlib import Path
 
 import joblib
 import mlflow
-import mlflow.sklearn
 import mlflow.lightgbm
+import mlflow.sklearn
 import numpy as np
 import pandas as pd
+from feature_engineer import run_feature_engineering
 from lightgbm import LGBMClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -35,14 +36,15 @@ from sklearn.metrics import (
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 
 from data_ingestion import run_ingestion, split_data
-from feature_engineer import run_feature_engineering
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+)
 logger = logging.getLogger(__name__)
 
-DATA_DIR      = Path("data")
+DATA_DIR = Path("data")
 ARTIFACTS_DIR = Path("artifacts")
-MLFLOW_URI    = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
+MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
 
 # ---------------------------------------------------------------------------
 # Experiment configuration
@@ -77,19 +79,21 @@ MODELS = {
 # Metric computation helpers
 # ---------------------------------------------------------------------------
 
+
 def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray) -> dict:
     return {
-        "accuracy":  accuracy_score(y_true, y_pred),
+        "accuracy": accuracy_score(y_true, y_pred),
         "precision": precision_score(y_true, y_pred, zero_division=0),
-        "recall":    recall_score(y_true, y_pred, zero_division=0),
-        "f1":        f1_score(y_true, y_pred, zero_division=0),
-        "roc_auc":   roc_auc_score(y_true, y_prob),
+        "recall": recall_score(y_true, y_pred, zero_division=0),
+        "f1": f1_score(y_true, y_pred, zero_division=0),
+        "roc_auc": roc_auc_score(y_true, y_prob),
     }
 
 
 # ---------------------------------------------------------------------------
 # Training loop
 # ---------------------------------------------------------------------------
+
 
 def train_and_track(
     X_train: np.ndarray,
@@ -106,13 +110,13 @@ def train_and_track(
     mlflow.set_tracking_uri(MLFLOW_URI)
     mlflow.set_experiment(EXPERIMENT_NAME)
 
-    best_run_id  = None
-    best_f1      = -1.0
+    best_run_id = None
+    best_f1 = -1.0
     best_model_name = None
 
     for name, config in MODELS.items():
         logger.info("Training model: %s", name)
-        model  = config["model"]
+        model = config["model"]
         params = config["params"]
         model.set_params(**params)
 
@@ -126,7 +130,7 @@ def train_and_track(
             cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
             cv_f1 = cross_val_score(model, X_train, y_train, cv=cv, scoring="f1")
             mlflow.log_metric("cv_f1_mean", cv_f1.mean())
-            mlflow.log_metric("cv_f1_std",  cv_f1.std())
+            mlflow.log_metric("cv_f1_std", cv_f1.std())
             logger.info("CV F1: %.4f ± %.4f", cv_f1.mean(), cv_f1.std())
 
             # ---- Full training ----
@@ -172,7 +176,9 @@ def train_and_track(
                 best_run_id = run.info.run_id
                 best_model_name = name
 
-    logger.info("Best model: %s (val F1=%.4f, run_id=%s)", best_model_name, best_f1, best_run_id)
+    logger.info(
+        "Best model: %s (val F1=%.4f, run_id=%s)", best_model_name, best_f1, best_run_id
+    )
     return best_run_id, best_model_name
 
 
@@ -182,7 +188,9 @@ def register_best_model(run_id: str, model_name: str) -> None:
     registered = mlflow.register_model(model_uri, "ai_retail_satisfaction_model")
     logger.info(
         "Registered model '%s' version %s from run %s.",
-        registered.name, registered.version, run_id,
+        registered.name,
+        registered.version,
+        run_id,
     )
     # Use alias instead of stage: stages are deprecated in newer MLflow.
     client = mlflow.tracking.MlflowClient()
@@ -191,7 +199,9 @@ def register_best_model(run_id: str, model_name: str) -> None:
         alias="production",
         version=registered.version,
     )
-    logger.info("Model alias 'production' now points to version %s.", registered.version)
+    logger.info(
+        "Model alias 'production' now points to version %s.", registered.version
+    )
 
 
 def save_best_model_locally(run_id: str, model_name: str) -> None:
@@ -216,9 +226,14 @@ if __name__ == "__main__":
     cleaned = run_ingestion()
     train_df, val_df, test_df = split_data(cleaned)
     (
-        X_train, X_val, X_test,
-        y_train, y_val, y_test,
-        preprocessor, le,
+        X_train,
+        X_val,
+        X_test,
+        y_train,
+        y_val,
+        y_test,
+        preprocessor,
+        le,
     ) = run_feature_engineering(train_df, val_df, test_df)
 
     best_run_id, best_model_name = train_and_track(

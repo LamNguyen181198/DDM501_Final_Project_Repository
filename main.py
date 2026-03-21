@@ -13,24 +13,33 @@ import pandas as pd
 import uvicorn
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse, Response
 from prometheus_client import (
+    CONTENT_TYPE_LATEST,
     Counter,
     Gauge,
     Histogram,
     generate_latest,
-    CONTENT_TYPE_LATEST,
 )
-from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from data_ingestion import (
+    AGE_GROUP_CATEGORIES,
+    COUNTRY_CATEGORIES,
+    EDUCATION_CATEGORIES,
+    GENDER_CATEGORIES,
+    REGION_CATEGORIES,
+    SALARY_CATEGORIES,
+)
 from feature_engineering import create_domain_features
-from data_ingestion import AGE_GROUP_CATEGORIES, COUNTRY_CATEGORIES, EDUCATION_CATEGORIES, GENDER_CATEGORIES, REGION_CATEGORIES, SALARY_CATEGORIES
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 ARTIFACTS_DIR = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
-API_VERSION   = "v1"
+API_VERSION = "v1"
 
 # ---------------------------------------------------------------------------
 # Prometheus metrics
@@ -56,7 +65,9 @@ MODEL_PREDICTION_CONFIDENCE = Histogram(
     "Confidence score of predictions",
     buckets=[0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 1.0],
 )
-ACTIVE_REQUESTS = Gauge("api_active_requests", "Number of active requests being processed")
+ACTIVE_REQUESTS = Gauge(
+    "api_active_requests", "Number of active requests being processed"
+)
 
 CUSTOMER_FEATURES_EXAMPLE = {
     "country": "INDIA",
@@ -87,6 +98,7 @@ CUSTOMER_FEATURES_EXAMPLE = {
 # ---------------------------------------------------------------------------
 # Pydantic schemas
 # ---------------------------------------------------------------------------
+
 
 class CustomerFeatures(BaseModel):
     """Input schema for a single retail AI satisfaction record."""
@@ -226,8 +238,9 @@ class HealthResponse(BaseModel):
 # Model state
 # ---------------------------------------------------------------------------
 
+
 class ModelState:
-    model        = None
+    model = None
     preprocessor = None
     label_encoder = None
     model_version = "unknown"
@@ -239,11 +252,13 @@ state = ModelState()
 def load_artifacts() -> None:
     """Load model and preprocessing artifacts from disk."""
     try:
-        state.model         = joblib.load(ARTIFACTS_DIR / "model.joblib")
-        state.preprocessor  = joblib.load(ARTIFACTS_DIR / "preprocessor.joblib")
+        state.model = joblib.load(ARTIFACTS_DIR / "model.joblib")
+        state.preprocessor = joblib.load(ARTIFACTS_DIR / "preprocessor.joblib")
         state.label_encoder = joblib.load(ARTIFACTS_DIR / "label_encoder.joblib")
         state.model_version = os.getenv("MODEL_VERSION", "1.0.0")
-        logger.info("Artifacts loaded successfully. Model version: %s", state.model_version)
+        logger.info(
+            "Artifacts loaded successfully. Model version: %s", state.model_version
+        )
     except Exception as exc:
         logger.error("Failed to load artifacts: %s", exc)
         raise
@@ -253,6 +268,7 @@ def load_artifacts() -> None:
 # Prediction logic
 # ---------------------------------------------------------------------------
 
+
 def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     """Reuse the training-time feature engineering for inference."""
     return create_domain_features(df)
@@ -261,11 +277,11 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 def predict_single(features: CustomerFeatures) -> PredictionResponse:
     df = pd.DataFrame([features.model_dump()])
     df = _engineer_features(df)
-    X  = state.preprocessor.transform(df)
+    X = state.preprocessor.transform(df)
 
     proba = state.model.predict_proba(X)[0]
     pred_idx = int(np.argmax(proba))
-    classes  = state.label_encoder.classes_   # e.g. ["High", "Low"]
+    classes = state.label_encoder.classes_  # e.g. ["High", "Low"]
 
     confidence = float(proba[pred_idx])
     predicted_class = classes[pred_idx]
@@ -285,6 +301,7 @@ def predict_single(features: CustomerFeatures) -> PredictionResponse:
 # ---------------------------------------------------------------------------
 # App lifecycle
 # ---------------------------------------------------------------------------
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -320,9 +337,11 @@ def _get_server_config() -> tuple[str, int]:
 # Routes
 # ---------------------------------------------------------------------------
 
+
 @app.get("/", include_in_schema=False)
 async def root():
     return RedirectResponse(url="/docs")
+
 
 @app.get(f"/api/{API_VERSION}/health", response_model=HealthResponse, tags=["System"])
 async def health():
@@ -336,11 +355,13 @@ async def health():
 @app.get(f"/api/{API_VERSION}/model/info", tags=["System"])
 async def model_info():
     return {
-        "model_version":   state.model_version,
-        "model_type":      type(state.model).__name__,
-        "api_version":     API_VERSION,
+        "model_version": state.model_version,
+        "model_type": type(state.model).__name__,
+        "api_version": API_VERSION,
         "target_variable": "satisfaction_level",
-        "output_classes":  list(state.label_encoder.classes_) if state.label_encoder else [],
+        "output_classes": (
+            list(state.label_encoder.classes_) if state.label_encoder else []
+        ),
     }
 
 
@@ -382,13 +403,15 @@ async def predict(features: CustomerFeatures):
 async def predict_batch(request: BatchPredictionRequest):
     """Process up to 1000 records in a single call."""
     if len(request.records) > 1000:
-        raise HTTPException(status_code=400, detail="Batch size must not exceed 1000 records.")
+        raise HTTPException(
+            status_code=400, detail="Batch size must not exceed 1000 records."
+        )
 
     ACTIVE_REQUESTS.inc()
     start = time.perf_counter()
     try:
         predictions = [predict_single(r) for r in request.records]
-        elapsed_ms  = (time.perf_counter() - start) * 1000
+        elapsed_ms = (time.perf_counter() - start) * 1000
         REQUEST_COUNT.labels(endpoint="predict_batch", status="success").inc()
         return BatchPredictionResponse(
             predictions=predictions,

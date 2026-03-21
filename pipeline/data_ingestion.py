@@ -10,7 +10,9 @@ from typing import Optional, Tuple
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 DEFAULT_KAGGLE_DATASET = "pooriamst/online-shopping"
@@ -142,7 +144,9 @@ def download_raw_data_from_kaggle(path: Path = RAW_PATH) -> Optional[Path]:
             "Install requirements.txt before running the pipeline."
         ) from exc
 
-    logger.info("Dataset missing locally. Downloading from Kaggle dataset '%s'.", dataset_slug)
+    logger.info(
+        "Dataset missing locally. Downloading from Kaggle dataset '%s'.", dataset_slug
+    )
     try:
         download_dir = Path(kagglehub.dataset_download(dataset_slug))
     except Exception as exc:
@@ -154,7 +158,9 @@ def download_raw_data_from_kaggle(path: Path = RAW_PATH) -> Optional[Path]:
 
     source_csv = _find_first_csv(download_dir)
     if source_csv is None:
-        raise FileNotFoundError(f"No CSV file was found in downloaded Kaggle dataset: {download_dir}")
+        raise FileNotFoundError(
+            f"No CSV file was found in downloaded Kaggle dataset: {download_dir}"
+        )
 
     path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_csv, path)
@@ -165,6 +171,7 @@ def download_raw_data_from_kaggle(path: Path = RAW_PATH) -> Optional[Path]:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def load_raw_data(path: Path = RAW_PATH) -> pd.DataFrame:
     """Read the raw CSV from *path* and return a DataFrame."""
@@ -295,17 +302,22 @@ def split_data(
     )
     val_relative = val_size / (1 - test_size)
     X_train, X_val, y_train, y_val = train_test_split(
-        X_train_val, y_train_val,
-        test_size=val_relative, stratify=y_train_val, random_state=random_state,
+        X_train_val,
+        y_train_val,
+        test_size=val_relative,
+        stratify=y_train_val,
+        random_state=random_state,
     )
 
     train_df = pd.concat([X_train, y_train], axis=1)
-    val_df   = pd.concat([X_val,   y_val],   axis=1)
-    test_df  = pd.concat([X_test,  y_test],  axis=1)
+    val_df = pd.concat([X_val, y_val], axis=1)
+    test_df = pd.concat([X_test, y_test], axis=1)
 
     logger.info(
         "Split → train %d | val %d | test %d",
-        len(train_df), len(val_df), len(test_df),
+        len(train_df),
+        len(val_df),
+        len(test_df),
     )
     return train_df, val_df, test_df
 

@@ -7,7 +7,12 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import LabelEncoder, MinMaxScaler, OneHotEncoder, OrdinalEncoder
+from sklearn.preprocessing import (
+    LabelEncoder,
+    MinMaxScaler,
+    OneHotEncoder,
+    OrdinalEncoder,
+)
 
 from data_ingestion import (
     AGE_GROUP_CATEGORIES,
@@ -17,7 +22,9 @@ from data_ingestion import (
     YES_NO_COLUMNS,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path("data")
@@ -75,7 +82,9 @@ def create_domain_features(df: pd.DataFrame) -> pd.DataFrame:
         + df["ai_enhance_experience"]
         - df["ai_privacy_no_trust"]
     )
-    df["digital_payment_preference"] = df["payment_method_card"] + df["payment_method_ewallet"]
+    df["digital_payment_preference"] = (
+        df["payment_method_card"] + df["payment_method_ewallet"]
+    )
 
     logger.info(
         "Domain features created: ai_tool_usage_count, payment_method_count, "
@@ -110,13 +119,16 @@ def encode_target(y: pd.Series) -> np.ndarray:
     """Encode the Satisfied / Unsatisfied target to integer labels."""
     le = LabelEncoder()
     encoded = le.fit_transform(y)
-    logger.info("Target classes: %s → %s", list(le.classes_), list(range(len(le.classes_))))
+    logger.info(
+        "Target classes: %s → %s", list(le.classes_), list(range(len(le.classes_)))
+    )
     return encoded, le
 
 
 # ---------------------------------------------------------------------------
 # Step 3 – end-to-end feature engineering runner
 # ---------------------------------------------------------------------------
+
 
 def run_feature_engineering(
     train_df: pd.DataFrame,
@@ -137,41 +149,48 @@ def run_feature_engineering(
 
     # Domain features
     train_df = create_domain_features(train_df)
-    val_df   = create_domain_features(val_df)
-    test_df  = create_domain_features(test_df)
+    val_df = create_domain_features(val_df)
+    test_df = create_domain_features(test_df)
 
     # Split X / y
     X_train = train_df.drop(columns=[TARGET_COLUMN])
     y_train = train_df[TARGET_COLUMN]
-    X_val   = val_df.drop(columns=[TARGET_COLUMN])
-    y_val   = val_df[TARGET_COLUMN]
-    X_test  = test_df.drop(columns=[TARGET_COLUMN])
-    y_test  = test_df[TARGET_COLUMN]
+    X_val = val_df.drop(columns=[TARGET_COLUMN])
+    y_val = val_df[TARGET_COLUMN]
+    X_test = test_df.drop(columns=[TARGET_COLUMN])
+    y_test = test_df[TARGET_COLUMN]
 
     # Target encoding (fit on train only)
     y_train_enc, le = encode_target(y_train)
-    y_val_enc       = le.transform(y_val)
-    y_test_enc      = le.transform(y_test)
+    y_val_enc = le.transform(y_val)
+    y_test_enc = le.transform(y_test)
 
     # Preprocessor
     preprocessor = build_preprocessor()
     X_train_enc = preprocessor.fit_transform(X_train)
-    X_val_enc   = preprocessor.transform(X_val)
-    X_test_enc  = preprocessor.transform(X_test)
+    X_val_enc = preprocessor.transform(X_val)
+    X_test_enc = preprocessor.transform(X_test)
 
     # Persist artifacts
     joblib.dump(preprocessor, ARTIFACTS_DIR / "preprocessor.joblib")
-    joblib.dump(le,           ARTIFACTS_DIR / "label_encoder.joblib")
+    joblib.dump(le, ARTIFACTS_DIR / "label_encoder.joblib")
     logger.info("Preprocessor and label encoder saved to %s.", ARTIFACTS_DIR)
 
     logger.info(
         "Feature matrix shapes → train %s | val %s | test %s",
-        X_train_enc.shape, X_val_enc.shape, X_test_enc.shape,
+        X_train_enc.shape,
+        X_val_enc.shape,
+        X_test_enc.shape,
     )
     return (
-        X_train_enc, X_val_enc, X_test_enc,
-        y_train_enc, y_val_enc, y_test_enc,
-        preprocessor, le,
+        X_train_enc,
+        X_val_enc,
+        X_test_enc,
+        y_train_enc,
+        y_val_enc,
+        y_test_enc,
+        preprocessor,
+        le,
     )
 
 
