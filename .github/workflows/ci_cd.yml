@@ -117,6 +117,118 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Generate deployable model artifacts
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          import joblib
+          import pandas as pd
+          from sklearn.linear_model import LogisticRegression
+          from sklearn.preprocessing import LabelEncoder
+
+          from pipeline.feature_engineer import build_preprocessor, create_domain_features
+
+          records = [
+              {
+                  "country": "INDIA",
+                  "online_consumer": "YES",
+                  "age_group": "Gen X",
+                  "annual_salary_band": "Medium High",
+                  "gender": "Female",
+                  "education": "Masters' Degree",
+                  "payment_method_card": "YES",
+                  "living_region": "Metropolitan",
+                  "online_service_preference": "YES",
+                  "ai_endorsement": "YES",
+                  "ai_privacy_no_trust": "NO",
+                  "ai_enhance_experience": "YES",
+                  "ai_tool_chatbots": "YES",
+                  "ai_tool_virtual_assistant": "YES",
+                  "ai_tool_voice_photo_search": "NO",
+                  "payment_method_cod": "NO",
+                  "payment_method_ewallet": "YES",
+                  "product_category_appliances": "NO",
+                  "product_category_electronics": "YES",
+                  "product_category_groceries": "NO",
+                  "product_category_personal_care": "YES",
+                  "product_category_clothing": "NO",
+                  "satisfaction_level": "Satisfied",
+              },
+              {
+                  "country": "CHINA",
+                  "online_consumer": "NO",
+                  "age_group": "Gen Z",
+                  "annual_salary_band": "Low",
+                  "gender": "Male",
+                  "education": "Highschool Graduate",
+                  "payment_method_card": "NO",
+                  "living_region": "Rural Areas",
+                  "online_service_preference": "NO",
+                  "ai_endorsement": "NO",
+                  "ai_privacy_no_trust": "YES",
+                  "ai_enhance_experience": "NO",
+                  "ai_tool_chatbots": "NO",
+                  "ai_tool_virtual_assistant": "NO",
+                  "ai_tool_voice_photo_search": "NO",
+                  "payment_method_cod": "YES",
+                  "payment_method_ewallet": "NO",
+                  "product_category_appliances": "YES",
+                  "product_category_electronics": "NO",
+                  "product_category_groceries": "YES",
+                  "product_category_personal_care": "NO",
+                  "product_category_clothing": "YES",
+                  "satisfaction_level": "Unsatisfied",
+              },
+          ]
+
+          # Duplicate records so classifier fit has a few samples per class.
+          df = pd.DataFrame(records * 8)
+          df = create_domain_features(df)
+
+          X = df.drop(columns=["satisfaction_level"])
+          y = df["satisfaction_level"]
+
+          preprocessor = build_preprocessor()
+          X_enc = preprocessor.fit_transform(X)
+
+          label_encoder = LabelEncoder()
+          y_enc = label_encoder.fit_transform(y)
+
+          model = LogisticRegression(max_iter=500, random_state=42)
+          model.fit(X_enc, y_enc)
+
+          artifacts_dir = Path("artifacts")
+          artifacts_dir.mkdir(parents=True, exist_ok=True)
+          joblib.dump(model, artifacts_dir / "model.joblib")
+          joblib.dump(preprocessor, artifacts_dir / "preprocessor.joblib")
+          joblib.dump(label_encoder, artifacts_dir / "label_encoder.joblib")
+
+          print("Generated artifacts:")
+          for file_name in ["model.joblib", "preprocessor.joblib", "label_encoder.joblib"]:
+              print(str(artifacts_dir / file_name))
+          PY
+
+      - name: Upload model artifacts for deploy
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-model-artifacts
+          path: |
+            artifacts/model.joblib
+            artifacts/preprocessor.joblib
+            artifacts/label_encoder.joblib
+          if-no-files-found: error
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -160,6 +272,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download model artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: deploy-model-artifacts
+          path: artifacts
 
       - name: Deploy via Docker Compose
         env:
