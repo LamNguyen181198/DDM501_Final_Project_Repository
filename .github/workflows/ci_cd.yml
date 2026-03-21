@@ -166,6 +166,21 @@ jobs:
           MODEL_VERSION: ${{ github.sha }}
           GRAFANA_PASSWORD: ${{ secrets.GRAFANA_PASSWORD }}
         run: |
+          echo "Checking required model artifacts..."
+          required_artifacts=(
+            "artifacts/model.joblib"
+            "artifacts/preprocessor.joblib"
+            "artifacts/label_encoder.joblib"
+          )
+          for artifact in "${required_artifacts[@]}"; do
+            if [ ! -f "$artifact" ]; then
+              echo "::error::Missing required artifact: $artifact"
+              echo "The API service mounts ./artifacts and requires trained model files."
+              echo "Train and persist artifacts before deploy, or change startup to load from a remote registry."
+              exit 1
+            fi
+          done
+
           echo "Pulling latest images and restarting services..."
           docker compose pull
           docker compose up -d --build
@@ -173,9 +188,19 @@ jobs:
 
       - name: Verify API health post-deploy
         run: |
-          sleep 20
-          curl --fail http://localhost:8000/api/v1/health \
-            || (echo "Health check failed" && exit 1)
+          for i in {1..12}; do
+            if curl --fail --silent --show-error http://localhost:8000/api/v1/health > /dev/null; then
+              echo "API health check passed"
+              exit 0
+            fi
+            echo "API not healthy yet (attempt $i/12), waiting 10s..."
+            sleep 10
+          done
+
+          echo "Health check failed"
+          docker compose ps
+          docker compose logs api --tail=200
+          exit 1
 
       - name: Notify deployment success
         if: success()
