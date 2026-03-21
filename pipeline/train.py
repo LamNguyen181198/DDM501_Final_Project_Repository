@@ -20,7 +20,6 @@ import mlflow
 import mlflow.lightgbm
 import mlflow.sklearn
 import numpy as np
-import pandas as pd
 from feature_engineer import run_feature_engineering
 from lightgbm import LGBMClassifier
 from sklearn.ensemble import RandomForestClassifier
