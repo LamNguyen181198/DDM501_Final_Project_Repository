@@ -1,132 +1,87 @@
-"""
-Feature Engineering Module
----------------------------
-Transforms raw, cleaned data into ML-ready features aligned with the
-Customer Satisfaction / Trust Toward AI in Online Shopping project.
-
-Key engineered features:
-  - ai_usage_score   : composite AI usage intensity
-  - trust_index      : net trust signal
-  - age_group        : ordinal age bucketing
-  - spending_tier    : order-value bucket
-  - engagement_score : browsing + review activity
-"""
+"""Feature engineering for the AI in Retail Kaggle dataset."""
 
 import logging
 from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
-from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import (
-    LabelEncoder,
-    MinMaxScaler,
-    OneHotEncoder,
-    OrdinalEncoder,
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler, OneHotEncoder, OrdinalEncoder
+
+from data_ingestion import (
+    AGE_GROUP_CATEGORIES,
+    EDUCATION_CATEGORIES,
+    SALARY_CATEGORIES,
+    TARGET_COLUMN,
+    YES_NO_COLUMNS,
 )
-import joblib
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path("data")
 ARTIFACTS_DIR = Path("artifacts")
-TARGET_COLUMN = "satisfaction_level"
+
+AI_TOOL_COLUMNS = [
+    "ai_tool_chatbots",
+    "ai_tool_virtual_assistant",
+    "ai_tool_voice_photo_search",
+]
+PAYMENT_METHOD_COLUMNS = [
+    "payment_method_card",
+    "payment_method_cod",
+    "payment_method_ewallet",
+]
+PRODUCT_CATEGORY_COLUMNS = [
+    "product_category_appliances",
+    "product_category_electronics",
+    "product_category_groceries",
+    "product_category_personal_care",
+    "product_category_clothing",
+]
+DERIVED_NUMERIC_FEATURES = [
+    "ai_tool_usage_count",
+    "payment_method_count",
+    "product_category_count",
+    "ai_readiness_score",
+    "digital_payment_preference",
+]
+NUMERIC_FEATURES = YES_NO_COLUMNS + DERIVED_NUMERIC_FEATURES
+ORDINAL_FEATURES = ["age_group", "annual_salary_band", "education"]
+ORDINAL_CATEGORIES = [AGE_GROUP_CATEGORIES, SALARY_CATEGORIES, EDUCATION_CATEGORIES]
+NOMINAL_FEATURES = ["country", "gender", "living_region"]
 
 
-# ---------------------------------------------------------------------------
-# Step 1 – domain-specific feature creation
-# ---------------------------------------------------------------------------
+def _yes_no_to_int(series: pd.Series) -> pd.Series:
+    normalized = series.astype(str).str.strip().str.upper()
+    return normalized.map({"YES": 1, "NO": 0}).fillna(0).astype(int)
+
 
 def create_domain_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Add engineered features to the DataFrame in-place (returns copy)."""
+    """Add model-ready numeric features while preserving categorical columns."""
     df = df.copy()
 
-    # AI Usage Score: average utilisation across three AI channels
-    df["ai_usage_score"] = (
-        df["chatbot_usage"]
-        + df["recommendation_usage"]
-        + df["personalization_usage"]
-    ) / 3.0
+    for column in YES_NO_COLUMNS:
+        df[column] = _yes_no_to_int(df[column])
 
-    # Trust Index: net trust signal (usefulness minus privacy worry)
-    df["trust_index"] = (
-        df["trust_ai"]
-        + df["perceived_usefulness"]
-        - df["privacy_concern"]
+    df["ai_tool_usage_count"] = df[AI_TOOL_COLUMNS].sum(axis=1)
+    df["payment_method_count"] = df[PAYMENT_METHOD_COLUMNS].sum(axis=1)
+    df["product_category_count"] = df[PRODUCT_CATEGORY_COLUMNS].sum(axis=1)
+    df["ai_readiness_score"] = (
+        df["online_consumer"]
+        + df["online_service_preference"]
+        + df["ai_endorsement"]
+        + df["ai_enhance_experience"]
+        - df["ai_privacy_no_trust"]
     )
+    df["digital_payment_preference"] = df["payment_method_card"] + df["payment_method_ewallet"]
 
-    # Age group (ordinal buckets)
-    df["age_group"] = pd.cut(
-        df["age"],
-        bins=[0, 25, 35, 45, 55, 100],
-        labels=["18-25", "26-35", "36-45", "46-55", "55+"],
-    ).astype(str)
-
-    # Spending tier (order value quintiles)
-    df["spending_tier"] = pd.qcut(
-        df["average_order_value"],
-        q=5,
-        labels=["very_low", "low", "medium", "high", "very_high"],
-        duplicates="drop",
-    ).astype(str)
-
-    # Engagement score: normalised browsing × log(reviews + 1)
-    df["engagement_score"] = (
-        df["browsing_time_minutes"] * np.log1p(df["product_reviews_count"])
+    logger.info(
+        "Domain features created: ai_tool_usage_count, payment_method_count, "
+        "product_category_count, ai_readiness_score, digital_payment_preference."
     )
-
-    # Cart abandonment severity flag
-    df["high_abandonment"] = (df["cart_abandonment_rate"] > 0.5).astype(int)
-
-    logger.info("Domain features created: ai_usage_score, trust_index, age_group, "
-                "spending_tier, engagement_score, high_abandonment.")
     return df
-
-
-# ---------------------------------------------------------------------------
-# Step 2 – sklearn preprocessing pipeline
-# ---------------------------------------------------------------------------
-
-NUMERIC_FEATURES = [
-    "age",
-    "average_order_value",
-    "browsing_time_minutes",
-    "add_to_cart_not_purchased",
-    "product_reviews_count",
-    "cart_abandonment_rate",
-    "chatbot_usage",
-    "recommendation_usage",
-    "personalization_usage",
-    "trust_ai",
-    "perceived_usefulness",
-    "privacy_concern",
-    "ai_usage_score",
-    "trust_index",
-    "engagement_score",
-]
-
-ORDINAL_FEATURES = [
-    "purchase_frequency",  # daily / weekly / monthly / rarely
-    "ai_usage_frequency",  # always / often / sometimes / rarely / never
-    "age_group",
-    "spending_tier",
-]
-
-ORDINAL_CATEGORIES = [
-    ["rarely", "monthly", "weekly", "daily"],
-    ["never", "rarely", "sometimes", "often", "always"],
-    ["18-25", "26-35", "36-45", "46-55", "55+"],
-    ["very_low", "low", "medium", "high", "very_high"],
-]
-
-NOMINAL_FEATURES = [
-    "gender",
-    "preferred_category",
-]
-
-BINARY_FEATURES = ["high_abandonment"]
 
 
 def build_preprocessor() -> ColumnTransformer:
@@ -139,25 +94,20 @@ def build_preprocessor() -> ColumnTransformer:
         unknown_value=-1,
     )
 
-    nominal_transformer = OneHotEncoder(
-        handle_unknown="ignore",
-        sparse_output=False,
-    )
+    nominal_transformer = OneHotEncoder(handle_unknown="ignore", sparse_output=False)
 
-    preprocessor = ColumnTransformer(
+    return ColumnTransformer(
         transformers=[
-            ("num",     numeric_transformer,  NUMERIC_FEATURES),
-            ("ord",     ordinal_transformer,  ORDINAL_FEATURES),
-            ("nom",     nominal_transformer,  NOMINAL_FEATURES),
-            ("binary",  "passthrough",        BINARY_FEATURES),
+            ("num", numeric_transformer, NUMERIC_FEATURES),
+            ("ord", ordinal_transformer, ORDINAL_FEATURES),
+            ("nom", nominal_transformer, NOMINAL_FEATURES),
         ],
         remainder="drop",
     )
-    return preprocessor
 
 
 def encode_target(y: pd.Series) -> np.ndarray:
-    """Encode 'High'/'Low' target to 1/0."""
+    """Encode the Satisfied / Unsatisfied target to integer labels."""
     le = LabelEncoder()
     encoded = le.fit_transform(y)
     logger.info("Target classes: %s → %s", list(le.classes_), list(range(len(le.classes_))))

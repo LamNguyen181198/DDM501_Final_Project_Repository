@@ -22,6 +22,11 @@ RUN pip install --upgrade pip \
 # -----------------------------------------------------------------------
 FROM python:3.11-slim AS runtime
 
+# LightGBM runtime dependency (provides libgomp.so.1)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  libgomp1 \
+  && rm -rf /var/lib/apt/lists/*
+
 # Non-root user for security best-practice
 RUN groupadd --system appgroup \
  && useradd  --system --gid appgroup --home /app appuser
@@ -32,14 +37,17 @@ WORKDIR /app
 COPY --from=builder /install /usr/local
 
 # Application source
-COPY src/api/    ./src/api/
-COPY src/pipeline/feature_engineering.py ./src/pipeline/
-COPY artifacts/  ./artifacts/
+COPY main.py ./main.py
+COPY data_ingestion.py ./data_ingestion.py
+COPY feature_engineering.py ./feature_engineering.py
+COPY pipeline/ ./pipeline/
 
-# Make Python aware of the src package paths
-ENV PYTHONPATH="/app/src/api:/app/src/pipeline"
+# Make Python aware of the current repo layout
+ENV PYTHONPATH="/app:/app/pipeline"
 ENV ARTIFACTS_DIR="/app/artifacts"
 ENV MODEL_VERSION="1.0.0"
+
+RUN mkdir -p /app/artifacts
 
 # Drop to non-root
 USER appuser

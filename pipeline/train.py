@@ -12,6 +12,7 @@ Models evaluated:
 """
 
 import logging
+import os
 from pathlib import Path
 
 import joblib
@@ -41,12 +42,12 @@ logger = logging.getLogger(__name__)
 
 DATA_DIR      = Path("data")
 ARTIFACTS_DIR = Path("artifacts")
-MLFLOW_URI    = "http://mlflow:5000"
+MLFLOW_URI    = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
 
 # ---------------------------------------------------------------------------
 # Experiment configuration
 # ---------------------------------------------------------------------------
-EXPERIMENT_NAME = "customer_satisfaction_ai_trust"
+EXPERIMENT_NAME = "ai_retail_satisfaction"
 
 MODELS = {
     "logistic_regression": {
@@ -97,7 +98,8 @@ def train_and_track(
     y_val: np.ndarray,
     X_test: np.ndarray,
     y_test: np.ndarray,
-) -> str:
+    class_names: list[str],
+) -> tuple[str, str]:
     """
     Train all models, log to MLflow, return run_id of the best model.
     """
@@ -118,7 +120,7 @@ def train_and_track(
             # Log hyperparameters
             mlflow.log_params(params)
             mlflow.log_param("model_type", name)
-            mlflow.log_param("dataset", "online_shopping_ai_usage")
+            mlflow.log_param("dataset", "pooriamst/online-shopping")
 
             # ---- Cross-validation on training set ----
             cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
@@ -147,7 +149,12 @@ def train_and_track(
             logger.info("Test metrics: %s", test_metrics)
 
             # ---- Classification report as artifact ----
-            report = classification_report(y_test, y_test_pred, target_names=["Low", "High"])
+            report = classification_report(
+                y_test,
+                y_test_pred,
+                labels=list(range(len(class_names))),
+                target_names=class_names,
+            )
             report_path = ARTIFACTS_DIR / f"{name}_report.txt"
             report_path.parent.mkdir(parents=True, exist_ok=True)
             report_path.write_text(report)
@@ -155,9 +162,9 @@ def train_and_track(
 
             # ---- Log model to MLflow ----
             if name == "lightgbm":
-                mlflow.lightgbm.log_model(model, artifact_path="model")
+                mlflow.lightgbm.log_model(model, name="model")
             else:
-                mlflow.sklearn.log_model(model, artifact_path="model")
+                mlflow.sklearn.log_model(model, name="model")
 
             # ---- Track best ----
             if val_metrics["f1"] > best_f1:
@@ -172,25 +179,31 @@ def train_and_track(
 def register_best_model(run_id: str, model_name: str) -> None:
     """Register the best model in the MLflow Model Registry."""
     model_uri = f"runs:/{run_id}/model"
-    registered = mlflow.register_model(model_uri, "customer_satisfaction_model")
+    registered = mlflow.register_model(model_uri, "ai_retail_satisfaction_model")
     logger.info(
         "Registered model '%s' version %s from run %s.",
         registered.name, registered.version, run_id,
     )
-    # Transition to Production
+    # Use alias instead of stage: stages are deprecated in newer MLflow.
     client = mlflow.tracking.MlflowClient()
-    client.transition_model_version_stage(
-        name="customer_satisfaction_model",
+    client.set_registered_model_alias(
+        name="ai_retail_satisfaction_model",
+        alias="production",
         version=registered.version,
-        stage="Production",
     )
-    logger.info("Model promoted to Production stage.")
+    logger.info("Model alias 'production' now points to version %s.", registered.version)
 
 
-def save_best_model_locally(run_id: str) -> None:
+def save_best_model_locally(run_id: str, model_name: str) -> None:
     """Download the production model artifact for Docker-based serving."""
     ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-    model = mlflow.sklearn.load_model(f"runs:/{run_id}/model")
+
+    model_uri = f"runs:/{run_id}/model"
+    if model_name == "lightgbm":
+        model = mlflow.lightgbm.load_model(model_uri)
+    else:
+        model = mlflow.sklearn.load_model(model_uri)
+
     joblib.dump(model, ARTIFACTS_DIR / "model.joblib")
     logger.info("Best model saved locally to %s.", ARTIFACTS_DIR / "model.joblib")
 
@@ -209,8 +222,8 @@ if __name__ == "__main__":
     ) = run_feature_engineering(train_df, val_df, test_df)
 
     best_run_id, best_model_name = train_and_track(
-        X_train, y_train, X_val, y_val, X_test, y_test
+        X_train, y_train, X_val, y_val, X_test, y_test, list(le.classes_)
     )
     register_best_model(best_run_id, best_model_name)
-    save_best_model_locally(best_run_id)
+    save_best_model_locally(best_run_id, best_model_name)
     logger.info("Model training pipeline complete.")

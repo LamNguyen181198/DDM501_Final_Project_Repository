@@ -1,14 +1,5 @@
-"""
-Test Suite — Customer Satisfaction Prediction System
-------------------------------------------------------
-Covers:
-  - Unit tests: data ingestion, feature engineering
-  - Integration tests: API endpoints
-  - Data quality tests: schema validation, value ranges
-  - Model validation tests: accuracy/F1 thresholds
-"""
+"""Test suite for the AI in Retail satisfaction system."""
 
-import json
 import numpy as np
 import pandas as pd
 import pytest
@@ -22,31 +13,39 @@ from fastapi.testclient import TestClient
 # ============================================================
 
 SAMPLE_RECORD = {
-    "age": 28,
+    "country": "INDIA",
+    "online_consumer": "YES",
+    "age_group": "Gen X",
+    "annual_salary_band": "Medium High",
     "gender": "Female",
-    "purchase_frequency": "weekly",
-    "preferred_category": "Electronics",
-    "average_order_value": 120.5,
-    "browsing_time_minutes": 45.0,
-    "add_to_cart_not_purchased": 3,
-    "product_reviews_count": 12,
-    "cart_abandonment_rate": 0.35,
-    "ai_usage_frequency": "often",
-    "chatbot_usage": 5,
-    "recommendation_usage": 7,
-    "personalization_usage": 6,
-    "trust_ai": 0.72,
-    "perceived_usefulness": 0.80,
-    "privacy_concern": 0.30,
+    "education": "Masters' Degree",
+    "payment_method_card": "YES",
+    "living_region": "Metropolitan",
+    "online_service_preference": "YES",
+    "ai_endorsement": "YES",
+    "ai_privacy_no_trust": "NO",
+    "ai_enhance_experience": "YES",
+    "ai_tool_chatbots": "YES",
+    "ai_tool_virtual_assistant": "YES",
+    "ai_tool_voice_photo_search": "NO",
+    "payment_method_cod": "NO",
+    "payment_method_ewallet": "YES",
+    "product_category_appliances": "NO",
+    "product_category_electronics": "YES",
+    "product_category_groceries": "NO",
+    "product_category_personal_care": "YES",
+    "product_category_clothing": "NO",
 }
 
 REQUIRED_COLUMNS = [
-    "age", "gender", "purchase_frequency", "preferred_category",
-    "average_order_value", "browsing_time_minutes",
-    "add_to_cart_not_purchased", "product_reviews_count",
-    "cart_abandonment_rate", "ai_usage_frequency",
-    "chatbot_usage", "recommendation_usage", "personalization_usage",
-    "trust_ai", "perceived_usefulness", "privacy_concern",
+    "country", "online_consumer", "age_group", "annual_salary_band",
+    "gender", "education", "payment_method_card", "living_region",
+    "online_service_preference", "ai_endorsement", "ai_privacy_no_trust",
+    "ai_enhance_experience", "ai_tool_chatbots", "ai_tool_virtual_assistant",
+    "ai_tool_voice_photo_search", "payment_method_cod", "payment_method_ewallet",
+    "product_category_appliances", "product_category_electronics",
+    "product_category_groceries", "product_category_personal_care",
+    "product_category_clothing",
     "satisfaction_level",
 ]
 
@@ -55,7 +54,7 @@ REQUIRED_COLUMNS = [
 def sample_df():
     """Minimal valid DataFrame with two records."""
     records = []
-    for satisfaction in ["High", "Low"]:
+    for satisfaction in ["Satisfied", "Unsatisfied"]:
         r = SAMPLE_RECORD.copy()
         r["satisfaction_level"] = satisfaction
         records.append(r)
@@ -66,8 +65,9 @@ def sample_df():
 def api_client():
     """TestClient for FastAPI app with mocked model artifacts."""
     import sys
-    sys.path.insert(0, str(Path(__file__).parent.parent / "src" / "api"))
-    sys.path.insert(0, str(Path(__file__).parent.parent / "src" / "pipeline"))
+    repo_root = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(repo_root))
+    sys.path.insert(0, str(repo_root / "pipeline"))
 
     # Mock artifacts so tests don't need real model files
     mock_model = MagicMock()
@@ -75,10 +75,10 @@ def api_client():
     mock_model.predict_proba.return_value = np.array([[0.2, 0.8]])
 
     mock_preprocessor = MagicMock()
-    mock_preprocessor.transform.return_value = np.zeros((1, 20))
+    mock_preprocessor.transform.return_value = np.zeros((1, 12))
 
     mock_le = MagicMock()
-    mock_le.classes_ = np.array(["High", "Low"])
+    mock_le.classes_ = np.array(["Satisfied", "Unsatisfied"])
     mock_le.transform.return_value = np.array([1])
 
     with patch("main.load_artifacts") as mock_load:
@@ -91,7 +91,8 @@ def api_client():
         mock_load.side_effect = side_effect
 
         from main import app
-        yield TestClient(app)
+        with TestClient(app) as client:
+            yield client
 
 
 # ============================================================
@@ -108,16 +109,16 @@ class TestDataIngestion:
 
     def test_validate_schema_fails_on_missing_column(self, sample_df):
         from data_ingestion import validate_schema
-        df = sample_df.drop(columns=["trust_ai"])
+        df = sample_df.drop(columns=["ai_endorsement"])
         is_valid, missing = validate_schema(df)
         assert is_valid is False
-        assert "trust_ai" in missing
+        assert "ai_endorsement" in missing
 
     def test_handle_missing_values_numeric(self, sample_df):
         from data_ingestion import handle_missing_values
-        sample_df.loc[0, "age"] = np.nan
+        sample_df.loc[0, "online_consumer"] = np.nan
         result = handle_missing_values(sample_df)
-        assert result["age"].isna().sum() == 0
+        assert result["online_consumer"].isna().sum() == 0
 
     def test_handle_missing_values_categorical(self, sample_df):
         from data_ingestion import handle_missing_values
@@ -138,47 +139,32 @@ class TestDataIngestion:
 
 class TestFeatureEngineering:
 
-    def test_ai_usage_score_computation(self, sample_df):
+    def test_ai_tool_usage_count_computation(self, sample_df):
         from feature_engineering import create_domain_features
         result = create_domain_features(sample_df)
-        expected = (
-            SAMPLE_RECORD["chatbot_usage"]
-            + SAMPLE_RECORD["recommendation_usage"]
-            + SAMPLE_RECORD["personalization_usage"]
-        ) / 3.0
-        assert abs(result["ai_usage_score"].iloc[0] - expected) < 1e-6
+        expected = 2
+        assert result["ai_tool_usage_count"].iloc[0] == expected
 
-    def test_trust_index_computation(self, sample_df):
+    def test_ai_readiness_score_computation(self, sample_df):
         from feature_engineering import create_domain_features
         result = create_domain_features(sample_df)
-        expected = (
-            SAMPLE_RECORD["trust_ai"]
-            + SAMPLE_RECORD["perceived_usefulness"]
-            - SAMPLE_RECORD["privacy_concern"]
-        )
-        assert abs(result["trust_index"].iloc[0] - expected) < 1e-6
+        expected = 4
+        assert result["ai_readiness_score"].iloc[0] == expected
 
-    def test_high_abandonment_flag(self, sample_df):
-        from feature_engineering import create_domain_features
-        sample_df.loc[0, "cart_abandonment_rate"] = 0.75
-        sample_df.loc[1, "cart_abandonment_rate"] = 0.20
-        result = create_domain_features(sample_df)
-        assert result["high_abandonment"].iloc[0] == 1
-        assert result["high_abandonment"].iloc[1] == 0
-
-    def test_age_group_ranges(self, sample_df):
-        from feature_engineering import create_domain_features
-        ages = [20, 30, 40, 50, 60]
-        expected_groups = ["18-25", "26-35", "36-45", "46-55", "55+"]
-        df = pd.concat([sample_df.iloc[[0]].copy()] * 5).reset_index(drop=True)
-        df["age"] = ages
-        result = create_domain_features(df)
-        assert list(result["age_group"]) == expected_groups
-
-    def test_engagement_score_is_non_negative(self, sample_df):
+    def test_digital_payment_preference(self, sample_df):
         from feature_engineering import create_domain_features
         result = create_domain_features(sample_df)
-        assert (result["engagement_score"] >= 0).all()
+        assert result["digital_payment_preference"].iloc[0] == 2
+
+    def test_product_category_count(self, sample_df):
+        from feature_engineering import create_domain_features
+        result = create_domain_features(sample_df)
+        assert result["product_category_count"].iloc[0] == 2
+
+    def test_binary_columns_become_numeric(self, sample_df):
+        from feature_engineering import create_domain_features
+        result = create_domain_features(sample_df)
+        assert set(result["online_consumer"].unique()).issubset({0, 1})
 
 
 # ============================================================
@@ -187,28 +173,38 @@ class TestFeatureEngineering:
 
 class TestDataQuality:
 
-    def test_age_range(self, sample_df):
-        """Ages should be between 18 and 100."""
-        assert sample_df["age"].between(18, 100).all()
+    def test_age_group_values(self, sample_df):
+        assert set(sample_df["age_group"].unique()).issubset({"Gen Z", "Millennials", "Gen X", "Baby Boomers"})
 
-    def test_trust_scores_range(self, sample_df):
-        """Trust/usefulness/privacy scores should be in [0, 1]."""
-        for col in ["trust_ai", "perceived_usefulness", "privacy_concern"]:
-            assert sample_df[col].between(0.0, 1.0).all(), f"{col} out of range"
+    def test_yes_no_fields_are_valid(self, sample_df):
+        for col in [
+            "online_consumer", "payment_method_card", "online_service_preference", "ai_endorsement",
+            "ai_privacy_no_trust", "ai_enhance_experience", "ai_tool_chatbots",
+            "ai_tool_virtual_assistant", "ai_tool_voice_photo_search", "payment_method_cod",
+            "payment_method_ewallet", "product_category_appliances", "product_category_electronics",
+            "product_category_groceries", "product_category_personal_care", "product_category_clothing",
+        ]:
+            assert set(sample_df[col].unique()).issubset({"YES", "NO"}), f"{col} has invalid values"
 
-    def test_cart_abandonment_range(self, sample_df):
-        assert sample_df["cart_abandonment_rate"].between(0.0, 1.0).all()
+    def test_country_values(self, sample_df):
+        assert set(sample_df["country"].unique()).issubset({"CANADA", "CHINA", "INDIA"})
 
     def test_target_classes_valid(self, sample_df):
-        valid_classes = {"High", "Low"}
+        valid_classes = {"Satisfied", "Unsatisfied"}
         assert set(sample_df["satisfaction_level"].unique()).issubset(valid_classes)
 
     def test_no_duplicate_records(self, sample_df):
         assert sample_df.duplicated().sum() == 0
 
-    def test_ai_usage_columns_non_negative(self, sample_df):
-        for col in ["chatbot_usage", "recommendation_usage", "personalization_usage"]:
-            assert (sample_df[col] >= 0).all(), f"{col} has negative values"
+    def test_product_category_flags_present(self, sample_df):
+        flagged = [
+            "product_category_appliances",
+            "product_category_electronics",
+            "product_category_groceries",
+            "product_category_personal_care",
+            "product_category_clothing",
+        ]
+        assert all(col in sample_df.columns for col in flagged)
 
 
 # ============================================================
@@ -216,6 +212,11 @@ class TestDataQuality:
 # ============================================================
 
 class TestAPIEndpoints:
+
+    def test_root_redirects_to_docs(self, api_client):
+        response = api_client.get("/", follow_redirects=False)
+        assert response.status_code in (307, 308)
+        assert response.headers["location"] == "/docs"
 
     def test_health_endpoint_returns_200(self, api_client):
         response = api_client.get("/api/v1/health")
@@ -230,17 +231,17 @@ class TestAPIEndpoints:
         data = response.json()
         assert "predicted_satisfaction" in data
         assert "confidence" in data
-        assert data["predicted_satisfaction"] in ["High", "Low"]
+        assert data["predicted_satisfaction"] in ["Satisfied", "Unsatisfied"]
 
-    def test_predict_endpoint_invalid_purchase_frequency(self, api_client):
+    def test_predict_endpoint_invalid_yes_no_field(self, api_client):
         bad_record = SAMPLE_RECORD.copy()
-        bad_record["purchase_frequency"] = "never"   # invalid value
+        bad_record["online_consumer"] = "MAYBE"
         response = api_client.post("/api/v1/predict", json=bad_record)
         assert response.status_code == 422
 
-    def test_predict_endpoint_age_out_of_range(self, api_client):
+    def test_predict_endpoint_invalid_age_group(self, api_client):
         bad_record = SAMPLE_RECORD.copy()
-        bad_record["age"] = 15   # under 18
+        bad_record["age_group"] = "Teen"
         response = api_client.post("/api/v1/predict", json=bad_record)
         assert response.status_code == 422
 
@@ -304,7 +305,7 @@ class TestModelValidation:
         assert auc >= 0.80, f"ROC-AUC {auc:.4f} unexpectedly low in simulation"
 
     def test_prediction_output_is_binary(self):
-        """Predictions should only be 'High' or 'Low'."""
-        valid = {"High", "Low"}
-        predictions = ["High", "Low", "High", "High", "Low"]
+        """Predictions should only be Satisfied or Unsatisfied."""
+        valid = {"Satisfied", "Unsatisfied"}
+        predictions = ["Satisfied", "Unsatisfied", "Satisfied", "Satisfied", "Unsatisfied"]
         assert all(p in valid for p in predictions)

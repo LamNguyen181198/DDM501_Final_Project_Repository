@@ -1,21 +1,11 @@
-"""
-Prediction REST API
---------------------
-FastAPI application that exposes the trained LightGBM customer-satisfaction
-classifier via a versioned REST API with:
-  - POST /api/v1/predict        — single-record inference
-  - POST /api/v1/predict/batch  — batch inference
-  - GET  /api/v1/health         — liveness probe
-  - GET  /api/v1/model/info     — model metadata
-  - GET  /metrics               — Prometheus metrics (scraped by Prometheus)
-"""
+"""Prediction API for the AI in Retail satisfaction model."""
 
 import logging
 import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 import joblib
 import numpy as np
@@ -30,8 +20,11 @@ from prometheus_client import (
     generate_latest,
     CONTENT_TYPE_LATEST,
 )
-from fastapi.responses import Response
-from pydantic import BaseModel, Field, field_validator
+from fastapi.responses import RedirectResponse, Response
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from feature_engineering import create_domain_features
+from data_ingestion import AGE_GROUP_CATEGORIES, COUNTRY_CATEGORIES, EDUCATION_CATEGORIES, GENDER_CATEGORIES, REGION_CATEGORIES, SALARY_CATEGORIES
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -65,45 +58,137 @@ MODEL_PREDICTION_CONFIDENCE = Histogram(
 )
 ACTIVE_REQUESTS = Gauge("api_active_requests", "Number of active requests being processed")
 
+CUSTOMER_FEATURES_EXAMPLE = {
+    "country": "INDIA",
+    "online_consumer": "YES",
+    "age_group": "Gen X",
+    "annual_salary_band": "Medium High",
+    "gender": "Female",
+    "education": "Masters' Degree",
+    "payment_method_card": "YES",
+    "living_region": "Metropolitan",
+    "online_service_preference": "YES",
+    "ai_endorsement": "YES",
+    "ai_privacy_no_trust": "NO",
+    "ai_enhance_experience": "YES",
+    "ai_tool_chatbots": "YES",
+    "ai_tool_virtual_assistant": "YES",
+    "ai_tool_voice_photo_search": "NO",
+    "payment_method_cod": "NO",
+    "payment_method_ewallet": "YES",
+    "product_category_appliances": "NO",
+    "product_category_electronics": "YES",
+    "product_category_groceries": "NO",
+    "product_category_personal_care": "YES",
+    "product_category_clothing": "NO",
+}
+
 
 # ---------------------------------------------------------------------------
 # Pydantic schemas
 # ---------------------------------------------------------------------------
 
 class CustomerFeatures(BaseModel):
-    """Input schema for a single customer record."""
-    age: int = Field(..., ge=18, le=100, example=28)
-    gender: str = Field(..., example="Female")
-    purchase_frequency: str = Field(..., example="weekly")
-    preferred_category: str = Field(..., example="Electronics")
-    average_order_value: float = Field(..., ge=0, example=120.5)
-    browsing_time_minutes: float = Field(..., ge=0, example=45.0)
-    add_to_cart_not_purchased: int = Field(..., ge=0, example=3)
-    product_reviews_count: int = Field(..., ge=0, example=12)
-    cart_abandonment_rate: float = Field(..., ge=0.0, le=1.0, example=0.35)
-    ai_usage_frequency: str = Field(..., example="often")
-    chatbot_usage: int = Field(..., ge=0, le=10, example=5)
-    recommendation_usage: int = Field(..., ge=0, le=10, example=7)
-    personalization_usage: int = Field(..., ge=0, le=10, example=6)
-    trust_ai: float = Field(..., ge=0.0, le=1.0, example=0.72)
-    perceived_usefulness: float = Field(..., ge=0.0, le=1.0, example=0.80)
-    privacy_concern: float = Field(..., ge=0.0, le=1.0, example=0.30)
+    """Input schema for a single retail AI satisfaction record."""
 
-    @field_validator("purchase_frequency")
-    @classmethod
-    def validate_purchase_frequency(cls, v):
-        allowed = {"daily", "weekly", "monthly", "rarely"}
-        if v.lower() not in allowed:
-            raise ValueError(f"purchase_frequency must be one of {allowed}")
-        return v.lower()
+    model_config = ConfigDict(json_schema_extra={"example": CUSTOMER_FEATURES_EXAMPLE})
 
-    @field_validator("ai_usage_frequency")
+    country: str = Field(...)
+    online_consumer: str = Field(...)
+    age_group: str = Field(...)
+    annual_salary_band: str = Field(...)
+    gender: str = Field(...)
+    education: str = Field(...)
+    payment_method_card: str = Field(...)
+    living_region: str = Field(...)
+    online_service_preference: str = Field(...)
+    ai_endorsement: str = Field(...)
+    ai_privacy_no_trust: str = Field(...)
+    ai_enhance_experience: str = Field(...)
+    ai_tool_chatbots: str = Field(...)
+    ai_tool_virtual_assistant: str = Field(...)
+    ai_tool_voice_photo_search: str = Field(...)
+    payment_method_cod: str = Field(...)
+    payment_method_ewallet: str = Field(...)
+    product_category_appliances: str = Field(...)
+    product_category_electronics: str = Field(...)
+    product_category_groceries: str = Field(...)
+    product_category_personal_care: str = Field(...)
+    product_category_clothing: str = Field(...)
+
+    @field_validator(
+        "online_consumer",
+        "payment_method_card",
+        "online_service_preference",
+        "ai_endorsement",
+        "ai_privacy_no_trust",
+        "ai_enhance_experience",
+        "ai_tool_chatbots",
+        "ai_tool_virtual_assistant",
+        "ai_tool_voice_photo_search",
+        "payment_method_cod",
+        "payment_method_ewallet",
+        "product_category_appliances",
+        "product_category_electronics",
+        "product_category_groceries",
+        "product_category_personal_care",
+        "product_category_clothing",
+    )
     @classmethod
-    def validate_ai_usage_frequency(cls, v):
-        allowed = {"always", "often", "sometimes", "rarely", "never"}
-        if v.lower() not in allowed:
-            raise ValueError(f"ai_usage_frequency must be one of {allowed}")
-        return v.lower()
+    def validate_yes_no(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        allowed = {"YES", "NO"}
+        if normalized not in allowed:
+            raise ValueError(f"value must be one of {allowed}")
+        return normalized
+
+    @field_validator("country")
+    @classmethod
+    def validate_country(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if normalized not in COUNTRY_CATEGORIES:
+            raise ValueError(f"country must be one of {COUNTRY_CATEGORIES}")
+        return normalized
+
+    @field_validator("age_group")
+    @classmethod
+    def validate_age_group(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized not in AGE_GROUP_CATEGORIES:
+            raise ValueError(f"age_group must be one of {AGE_GROUP_CATEGORIES}")
+        return normalized
+
+    @field_validator("annual_salary_band")
+    @classmethod
+    def validate_annual_salary_band(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized not in SALARY_CATEGORIES:
+            raise ValueError(f"annual_salary_band must be one of {SALARY_CATEGORIES}")
+        return normalized
+
+    @field_validator("gender")
+    @classmethod
+    def validate_gender(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized not in GENDER_CATEGORIES:
+            raise ValueError(f"gender must be one of {GENDER_CATEGORIES}")
+        return normalized
+
+    @field_validator("education")
+    @classmethod
+    def validate_education(cls, value: str) -> str:
+        normalized = value.strip().replace("’", "'")
+        if normalized not in EDUCATION_CATEGORIES:
+            raise ValueError(f"education must be one of {EDUCATION_CATEGORIES}")
+        return normalized
+
+    @field_validator("living_region")
+    @classmethod
+    def validate_living_region(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized not in REGION_CATEGORIES:
+            raise ValueError(f"living_region must be one of {REGION_CATEGORIES}")
+        return normalized
 
 
 class PredictionResponse(BaseModel):
@@ -114,6 +199,14 @@ class PredictionResponse(BaseModel):
 
 
 class BatchPredictionRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "records": [CUSTOMER_FEATURES_EXAMPLE, CUSTOMER_FEATURES_EXAMPLE],
+            }
+        }
+    )
+
     records: List[CustomerFeatures]
 
 
@@ -161,29 +254,8 @@ def load_artifacts() -> None:
 # ---------------------------------------------------------------------------
 
 def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Mirror the feature engineering from the training pipeline."""
-    df = df.copy()
-    import numpy as np
-    df["ai_usage_score"] = (
-        df["chatbot_usage"] + df["recommendation_usage"] + df["personalization_usage"]
-    ) / 3.0
-    df["trust_index"] = df["trust_ai"] + df["perceived_usefulness"] - df["privacy_concern"]
-    df["age_group"] = pd.cut(
-        df["age"],
-        bins=[0, 25, 35, 45, 55, 100],
-        labels=["18-25", "26-35", "36-45", "46-55", "55+"],
-    ).astype(str)
-    df["spending_tier"] = pd.qcut(
-        df["average_order_value"],
-        q=5,
-        labels=["very_low", "low", "medium", "high", "very_high"],
-        duplicates="drop",
-    ).astype(str)
-    df["engagement_score"] = (
-        df["browsing_time_minutes"] * np.log1p(df["product_reviews_count"])
-    )
-    df["high_abandonment"] = (df["cart_abandonment_rate"] > 0.5).astype(int)
-    return df
+    """Reuse the training-time feature engineering for inference."""
+    return create_domain_features(df)
 
 
 def predict_single(features: CustomerFeatures) -> PredictionResponse:
@@ -221,10 +293,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Customer Satisfaction Prediction API",
+    title="AI Retail Satisfaction Prediction API",
     description=(
-        "Predicts customer satisfaction / trust toward AI systems "
-        "in online shopping environments. DDM501 Group 4."
+        "Predicts whether a retail customer is satisfied or unsatisfied with "
+        "AI-assisted online shopping experiences."
     ),
     version=API_VERSION,
     lifespan=lifespan,
@@ -238,9 +310,19 @@ app.add_middleware(
 )
 
 
+def _get_server_config() -> tuple[str, int]:
+    host = os.getenv("API_HOST", "127.0.0.1")
+    port = int(os.getenv("API_PORT", "8000"))
+    return host, port
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
+@app.get("/", include_in_schema=False)
+async def root():
+    return RedirectResponse(url="/docs")
 
 @app.get(f"/api/{API_VERSION}/health", response_model=HealthResponse, tags=["System"])
 async def health():
@@ -267,12 +349,12 @@ async def model_info():
     response_model=PredictionResponse,
     status_code=status.HTTP_200_OK,
     tags=["Prediction"],
-    summary="Predict satisfaction for a single customer",
+    summary="Predict AI retail satisfaction for a single customer",
 )
 async def predict(features: CustomerFeatures):
     """
-    Given customer demographic, shopping behaviour, and AI-perception features,
-    returns a predicted satisfaction level (High / Low) with confidence score.
+    Given a retail customer's AI shopping profile, return a predicted
+    satisfaction label with confidence score.
     """
     ACTIVE_REQUESTS.inc()
     start = time.perf_counter()
@@ -327,4 +409,8 @@ async def metrics():
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
+    host, port = _get_server_config()
+    access_host = "127.0.0.1" if host == "0.0.0.0" else host
+    logger.info("Starting API server on http://%s:%s", access_host, port)
+    logger.info("Open API docs at http://%s:%s/docs", access_host, port)
+    uvicorn.run(app, host=host, port=port, reload=False)

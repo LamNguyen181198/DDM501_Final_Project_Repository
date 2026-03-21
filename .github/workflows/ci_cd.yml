@@ -49,13 +49,13 @@ jobs:
         run: pip install flake8 black isort
 
       - name: Run black (format check)
-        run: black --check src/ tests/
+        run: black --check main.py pipeline/ tests/ data_ingestion.py feature_engineering.py
 
       - name: Run isort (import order)
-        run: isort --check-only src/ tests/
+        run: isort --check-only main.py pipeline/ tests/ data_ingestion.py feature_engineering.py
 
       - name: Run flake8
-        run: flake8 src/ tests/ --max-line-length=120 --ignore=E203,W503
+        run: flake8 main.py pipeline/ tests/ data_ingestion.py feature_engineering.py --max-line-length=120 --ignore=E203,W503
 
   # -------------------------------------------------------------------------
   # Stage 2 — Tests
@@ -87,7 +87,10 @@ jobs:
       - name: Run tests with coverage
         run: |
           pytest tests/ \
-            --cov=src \
+            --cov=main \
+            --cov=pipeline \
+            --cov=data_ingestion \
+            --cov=feature_engineering \
             --cov-report=xml \
             --cov-report=term-missing \
             --cov-fail-under=80 \

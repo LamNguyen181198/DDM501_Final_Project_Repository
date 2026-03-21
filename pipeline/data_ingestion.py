@@ -1,13 +1,9 @@
-"""
-Data Ingestion Module
----------------------
-Loads the 'Online Shopping and AI Usage Dataset' from Kaggle (or local CSV),
-validates schema, handles missing values, removes duplicates, and persists
-a clean version for downstream processing.
-"""
+"""Data ingestion for the AI in Retail Kaggle dataset."""
 
 import logging
 import os
+import re
+import shutil
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -17,33 +13,153 @@ from sklearn.model_selection import train_test_split
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Schema definition — every column and its expected dtype
-# ---------------------------------------------------------------------------
-REQUIRED_COLUMNS: dict[str, str] = {
-    "age": "int64",
-    "gender": "object",
-    "purchase_frequency": "object",         # shopping behavior
-    "preferred_category": "object",
-    "average_order_value": "float64",
-    "browsing_time_minutes": "float64",
-    "add_to_cart_not_purchased": "int64",
-    "product_reviews_count": "int64",
-    "cart_abandonment_rate": "float64",
-    "ai_usage_frequency": "object",          # AI usage behavior
-    "chatbot_usage": "int64",
-    "recommendation_usage": "int64",
-    "personalization_usage": "int64",
-    "trust_ai": "float64",                   # trust/perception
-    "perceived_usefulness": "float64",
-    "privacy_concern": "float64",
-    "satisfaction_level": "object",          # target — "High" / "Low"
-}
-
+DEFAULT_KAGGLE_DATASET = "pooriamst/online-shopping"
 TARGET_COLUMN = "satisfaction_level"
 DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
 RAW_PATH = DATA_DIR / "raw" / "online_shopping_ai.csv"
 PROCESSED_PATH = DATA_DIR / "processed" / "cleaned.csv"
+CSV_ENCODINGS = ["utf-8", "utf-8-sig", "cp1252", "latin1"]
+
+AGE_GROUP_CATEGORIES = ["Gen Z", "Millennials", "Gen X", "Baby Boomers"]
+SALARY_CATEGORIES = ["Low", "Medium", "Medium High", "High"]
+EDUCATION_CATEGORIES = [
+    "Highschool Graduate",
+    "University Graduate",
+    "Masters' Degree",
+    "Doctorate Degree",
+]
+COUNTRY_CATEGORIES = ["CANADA", "CHINA", "INDIA"]
+GENDER_CATEGORIES = ["Female", "Male", "Prefer not to say"]
+REGION_CATEGORIES = ["Metropolitan", "Suburban Areas", "Rural Areas"]
+YES_NO_COLUMNS = [
+    "online_consumer",
+    "payment_method_card",
+    "online_service_preference",
+    "ai_endorsement",
+    "ai_privacy_no_trust",
+    "ai_enhance_experience",
+    "ai_tool_chatbots",
+    "ai_tool_virtual_assistant",
+    "ai_tool_voice_photo_search",
+    "payment_method_cod",
+    "payment_method_ewallet",
+    "product_category_appliances",
+    "product_category_electronics",
+    "product_category_groceries",
+    "product_category_personal_care",
+    "product_category_clothing",
+]
+REQUIRED_COLUMNS: dict[str, str] = {
+    "country": "object",
+    "online_consumer": "object",
+    "age_group": "object",
+    "annual_salary_band": "object",
+    "gender": "object",
+    "education": "object",
+    "payment_method_card": "object",
+    "living_region": "object",
+    "online_service_preference": "object",
+    "ai_endorsement": "object",
+    "ai_privacy_no_trust": "object",
+    "ai_enhance_experience": "object",
+    "ai_tool_chatbots": "object",
+    "ai_tool_virtual_assistant": "object",
+    "ai_tool_voice_photo_search": "object",
+    "payment_method_cod": "object",
+    "payment_method_ewallet": "object",
+    "product_category_appliances": "object",
+    "product_category_electronics": "object",
+    "product_category_groceries": "object",
+    "product_category_personal_care": "object",
+    "product_category_clothing": "object",
+    TARGET_COLUMN: "object",
+}
+SOURCE_COLUMN_MAP = {
+    "country": "country",
+    "online_consumer": "online_consumer",
+    "age": "age_group",
+    "annual_salary": "annual_salary_band",
+    "gender": "gender",
+    "education": "education",
+    "payment_method_credit_debit": "payment_method_card",
+    "living_region": "living_region",
+    "online_service_preference": "online_service_preference",
+    "ai_endorsement": "ai_endorsement",
+    "ai_privacy_no_trust": "ai_privacy_no_trust",
+    "ai_enhance_experience": "ai_enhance_experience",
+    "ai_satisfication": TARGET_COLUMN,
+    "ai_tools_used_chatbots": "ai_tool_chatbots",
+    "ai_tools_used_virtual_assistant": "ai_tool_virtual_assistant",
+    "ai_tools_used_voice_photo_search": "ai_tool_voice_photo_search",
+    "payment_method_cod": "payment_method_cod",
+    "payment_method_ewallet": "payment_method_ewallet",
+    "product_category_appliances": "product_category_appliances",
+    "product_category_electronics": "product_category_electronics",
+    "product_category_groceries": "product_category_groceries",
+    "product_category_personal_care": "product_category_personal_care",
+    "product_category_clothing": "product_category_clothing",
+}
+
+
+def _find_first_csv(directory: Path) -> Optional[Path]:
+    csv_files = sorted(directory.rglob("*.csv"))
+    return csv_files[0] if csv_files else None
+
+
+def _normalize_column_name(column_name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", column_name.strip().lower()).strip("_")
+
+
+def _normalize_text_value(value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    return value.strip().replace("’", "'")
+
+
+def _normalize_raw_dataset(df: pd.DataFrame) -> pd.DataFrame:
+    normalized = df.rename(columns=lambda col: _normalize_column_name(str(col)))
+    normalized = normalized.rename(columns=SOURCE_COLUMN_MAP)
+    for column in normalized.select_dtypes(include="object").columns:
+        normalized[column] = normalized[column].map(_normalize_text_value)
+    return normalized
+
+
+def download_raw_data_from_kaggle(path: Path = RAW_PATH) -> Optional[Path]:
+    """Download the Kaggle dataset when the raw CSV is not present locally."""
+    dataset_slug = os.getenv("KAGGLE_DATASET", DEFAULT_KAGGLE_DATASET).strip()
+
+    if dataset_slug == "owner/dataset-slug":
+        raise ValueError(
+            "KAGGLE_DATASET is still set to the README placeholder 'owner/dataset-slug'. "
+            "Replace it with a real Kaggle dataset slug such as 'username/dataset-name'."
+        )
+
+    try:
+        import kagglehub
+    except ImportError as exc:
+        raise RuntimeError(
+            "Automatic Kaggle download requires 'kagglehub'. "
+            "Install requirements.txt before running the pipeline."
+        ) from exc
+
+    logger.info("Dataset missing locally. Downloading from Kaggle dataset '%s'.", dataset_slug)
+    try:
+        download_dir = Path(kagglehub.dataset_download(dataset_slug))
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to download Kaggle dataset '{dataset_slug}'. "
+            "Check that the slug is real, your Kaggle credentials are configured, "
+            "and your account has permission to access the dataset."
+        ) from exc
+
+    source_csv = _find_first_csv(download_dir)
+    if source_csv is None:
+        raise FileNotFoundError(f"No CSV file was found in downloaded Kaggle dataset: {download_dir}")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_csv, path)
+    logger.info("Copied Kaggle dataset from %s to %s", source_csv, path)
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -53,13 +169,39 @@ PROCESSED_PATH = DATA_DIR / "processed" / "cleaned.csv"
 def load_raw_data(path: Path = RAW_PATH) -> pd.DataFrame:
     """Read the raw CSV from *path* and return a DataFrame."""
     if not path.exists():
+        download_raw_data_from_kaggle(path)
+
+    if not path.exists():
         raise FileNotFoundError(
             f"Dataset not found at {path}. "
-            "Download it from Kaggle: 'online-shopping-and-ai-usage-dataset'."
+            "Place the CSV there manually, or set KAGGLE_DATASET=<owner/dataset> "
+            "to download it automatically from Kaggle."
         )
-    df = pd.read_csv(path)
-    logger.info("Loaded %d rows × %d cols from %s", *df.shape, path)
-    return df
+    last_error = None
+    for encoding in CSV_ENCODINGS:
+        try:
+            df = pd.read_csv(path, encoding=encoding)
+            df = _normalize_raw_dataset(df)
+            logger.info(
+                "Loaded %d rows × %d cols from %s using encoding %s",
+                *df.shape,
+                path,
+                encoding,
+            )
+            return df
+        except UnicodeDecodeError as exc:
+            last_error = exc
+
+    raise UnicodeDecodeError(
+        getattr(last_error, "encoding", "utf-8"),
+        getattr(last_error, "object", b""),
+        getattr(last_error, "start", 0),
+        getattr(last_error, "end", 0),
+        (
+            f"Unable to decode CSV at {path}. Tried encodings: {', '.join(CSV_ENCODINGS)}. "
+            "Verify that the downloaded dataset is a text CSV compatible with pandas."
+        ),
+    )
 
 
 def validate_schema(df: pd.DataFrame) -> Tuple[bool, list[str]]:
@@ -70,6 +212,7 @@ def validate_schema(df: pd.DataFrame) -> Tuple[bool, list[str]]:
     missing = [col for col in REQUIRED_COLUMNS if col not in df.columns]
     if missing:
         logger.warning("Schema validation failed — missing columns: %s", missing)
+        logger.warning("Found columns in dataset: %s", list(df.columns))
         return False, missing
     logger.info("Schema validation passed.")
     return True, []
@@ -118,7 +261,12 @@ def run_ingestion(path: Path = RAW_PATH) -> pd.DataFrame:
 
     is_valid, missing = validate_schema(df)
     if not is_valid:
-        raise ValueError(f"Dataset is missing required columns: {missing}")
+        dataset_slug = os.getenv("KAGGLE_DATASET", DEFAULT_KAGGLE_DATASET)
+        raise ValueError(
+            f"Dataset is missing required columns: {missing}. "
+            f"Found columns: {list(df.columns)}. "
+            f"The current dataset{f' ({dataset_slug})' if dataset_slug else ''} does not match the training schema."
+        )
 
     df = handle_missing_values(df)
     df = remove_duplicates(df)
