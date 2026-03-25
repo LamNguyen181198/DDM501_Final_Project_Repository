@@ -35,6 +35,13 @@ scrape_configs:
         target_label: instance
         replacement: "satisfaction_api"
 
-  # ---------- MLflow ----------
-  # MLflow does not expose native Prometheus metrics at /metrics.
-  # Add a dedicated exporter or blackbox probe before scraping it here.
+  # ---------- Evidently Drift Detection Service ----------
+  - job_name: "evidently"
+    metrics_path: "/metrics"
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["evidently:8001"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "evidently_drift_service"
