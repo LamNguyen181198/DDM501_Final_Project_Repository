@@ -1,0 +1,267 @@
+{
+  "id": null,
+  "uid": "satisfaction-drift",
+  "title": "Customer Satisfaction — Evidently Drift Monitoring",
+  "description": "Data drift and quality metrics from the Evidently AI service",
+  "tags": ["ddm501", "drift", "evidently"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Drift Detected",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "evidently_data_drift_detected",
+          "legendFormat": "Drift",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": {
+              "0": { "text": "NO DRIFT", "color": "green" },
+              "1": { "text": "DRIFT DETECTED", "color": "red" }
+            }}
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "type": "gauge",
+      "title": "Overall Drift Score (fraction drifted features)",
+      "gridPos": { "h": 4, "w": 6, "x": 4, "y": 0 },
+      "targets": [
+        {
+          "expr": "evidently_drift_score",
+          "legendFormat": "Drift Share",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.1 },
+              { "color": "red", "value": 0.3 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Missing Values Ratio",
+      "gridPos": { "h": 4, "w": 5, "x": 10, "y": 0 },
+      "targets": [
+        {
+          "expr": "evidently_missing_values_ratio",
+          "legendFormat": "Missing",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.05 },
+              { "color": "red", "value": 0.10 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Buffer Size",
+      "gridPos": { "h": 4, "w": 5, "x": 15, "y": 0 },
+      "targets": [
+        {
+          "expr": "evidently_buffer_size",
+          "legendFormat": "Records",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "blue", "value": null }]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Drift Score Over Time",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "expr": "evidently_drift_score",
+          "legendFormat": "Drift Share",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.1 },
+              { "color": "red", "value": 0.3 }
+            ]
+          },
+          "custom": {
+            "thresholdsStyle": { "mode": "area" }
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Missing Values Ratio Over Time",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        {
+          "expr": "evidently_missing_values_ratio",
+          "legendFormat": "Missing Values",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.05 },
+              { "color": "red", "value": 0.10 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "type": "bargauge",
+      "title": "Per-Feature Drift Scores",
+      "description": "Higher score = more drift. Red threshold at 0.05.",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 12 },
+      "targets": [
+        {
+          "expr": "evidently_feature_drift",
+          "legendFormat": "{{ feature }}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "horizontal",
+        "displayMode": "gradient"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.02 },
+              { "color": "red", "value": 0.05 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Drift Analysis Runs",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 22 },
+      "targets": [
+        {
+          "expr": "rate(evidently_analysis_runs_total[5m])",
+          "legendFormat": "Analysis Rate",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Capture Rate (records/s)",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 22 },
+      "targets": [
+        {
+          "expr": "rate(evidently_captures_total[1m])",
+          "legendFormat": "Captures/s",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } },
+        "overrides": []
+      }
+    }
+  ]
+}

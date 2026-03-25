@@ -116,3 +116,67 @@ groups:
         annotations:
           summary: "MLflow tracking server is unreachable"
           description: "Experiment tracking and model registry are unavailable."
+
+  # -----------------------------------------------------------------------
+  # Data drift — Evidently AI metrics
+  # -----------------------------------------------------------------------
+  - name: drift_alerts
+    rules:
+
+      - alert: DataDriftDetected
+        expr: evidently_data_drift_detected == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Data drift detected by Evidently"
+          description: >
+            The Evidently drift detector reports that input data has drifted
+            from the reference distribution. Current drift share: {{ $value }}.
+            Consider triggering a model retraining run via the Airflow DAG.
+
+      - alert: HighDriftScore
+        expr: evidently_drift_score > 0.3
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High dataset drift score (> 30 % of features drifted)"
+          description: >
+            Evidently drift share is {{ $value | humanizePercentage }}.
+            More than 30 % of input features have drifted significantly,
+            which may degrade model accuracy. Retrain immediately.
+
+      - alert: FeatureDrift
+        expr: evidently_feature_drift > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Individual feature drift detected"
+          description: >
+            Feature {{ $labels.feature }} has a drift score of {{ $value }}.
+            Investigate data pipeline upstream for distribution changes.
+
+      - alert: HighMissingValues
+        expr: evidently_missing_values_ratio > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High missing value ratio in incoming predictions"
+          description: >
+            {{ $value | humanizePercentage }} of values in the current
+            prediction window are missing. This could indicate upstream
+            data quality issues.
+
+      - alert: CriticalMissingValues
+        expr: evidently_missing_values_ratio > 0.3
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical missing values in incoming data"
+          description: >
+            {{ $value | humanizePercentage }} missing values detected —
+            data pipeline may be broken. Halt automated decisions.

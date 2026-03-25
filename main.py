@@ -7,11 +7,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List
 
+import httpx
 import joblib
 import numpy as np
 import pandas as pd
 import uvicorn
-from fastapi import FastAPI, HTTPException, status
+from fastapi import BackgroundTasks, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, Response
 from prometheus_client import (
@@ -39,6 +40,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 ARTIFACTS_DIR = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
+EVIDENTLY_URL = os.getenv("EVIDENTLY_URL", "http://evidently:8001")
 API_VERSION = "v1"
 
 # ---------------------------------------------------------------------------
@@ -274,6 +276,20 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     return create_domain_features(df)
 
 
+def _capture_for_drift(features: CustomerFeatures) -> None:
+    """Fire-and-forget: send prediction record to Evidently for drift monitoring."""
+    try:
+        payload = features.model_dump()
+        # Add derived features so Evidently sees the same columns as training
+        df = pd.DataFrame([payload])
+        df = create_domain_features(df)
+        first_row = df.iloc[0].to_dict()
+        with httpx.Client(timeout=2.0) as client:
+            client.post(f"{EVIDENTLY_URL}/capture", json=first_row)
+    except Exception as exc:
+        logger.debug("Evidently capture skipped: %s", exc)
+
+
 def predict_single(features: CustomerFeatures) -> PredictionResponse:
     df = pd.DataFrame([features.model_dump()])
     df = _engineer_features(df)
@@ -372,7 +388,7 @@ async def model_info():
     tags=["Prediction"],
     summary="Predict AI retail satisfaction for a single customer",
 )
-async def predict(features: CustomerFeatures):
+async def predict(features: CustomerFeatures, background_tasks: BackgroundTasks):
     """
     Given a retail customer's AI shopping profile, return a predicted
     satisfaction label with confidence score.
@@ -382,6 +398,8 @@ async def predict(features: CustomerFeatures):
     try:
         result = predict_single(features)
         REQUEST_COUNT.labels(endpoint="predict", status="success").inc()
+        # Send record to Evidently drift service asynchronously
+        background_tasks.add_task(_capture_for_drift, features)
         return result
     except Exception as exc:
         REQUEST_COUNT.labels(endpoint="predict", status="error").inc()

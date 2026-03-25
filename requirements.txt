@@ -17,8 +17,14 @@ fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 pydantic>=2.6.0
 
-# Monitoring
+# Monitoring — Prometheus metrics
 prometheus-client>=0.20.0
+
+# Monitoring — Evidently AI drift detection
+evidently>=0.4.30
+
+# Orchestration — Airflow (DAG runner; full install via docker image)
+apache-airflow-client>=2.9.0
 
 # Testing
 pytest>=8.0.0
@@ -29,3 +35,5 @@ httpx>=0.27.0
 black>=24.0.0
 flake8>=7.0.0
 isort>=5.13.0
+mypy>=1.10.0
+pre-commit>=3.7.0
